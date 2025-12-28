@@ -4,6 +4,7 @@
 !*.sh
 !*.json
 !.gitignore
+env.txt
 *.pt
 *.npy
 *.npz

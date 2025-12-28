@@ -79,11 +79,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
     BASE_DIR = os.path.dirname(__file__)
     
+    # Get API key from environment variable or file
+    api_key = os.getenv('OPENAI_API_KEY')
+    if api_key is None:
+        # Try reading from env.txt file
+        env_file = os.path.join(BASE_DIR, 'env.txt')
+        if os.path.exists(env_file):
+            with open(env_file, 'r') as f:
+                api_key = f.read().strip()
+        else:
+            raise ValueError("OPENAI_API_KEY not found. Set it as an environment variable or create an env.txt file with your API key.")
+    
     # Load dataset and tokenizer
     train_dataset = load_from_disk(os.path.join(BASE_DIR, "data/training_data/mixtures/gut10k_wiki100k_fw100k_tok1024/train_test_split/train"))
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
-    api_key = "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"
+    
     print("Loaded tokenizer and train dataset")
     print(f"Dataset size: {len(train_dataset)}")
     
