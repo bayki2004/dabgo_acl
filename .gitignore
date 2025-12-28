@@ -1,0 +1,23 @@
+*
+!*/
+!*.py
+!*.sh
+!*.json
+!.gitignore
+*.pt
+*.npy
+*.npz
+**/*.pt
+**/*.npy
+**/*.npz
+wandb/
+jobs/
+data/
+out/gpt2-medium-restarted/
+gecko/data_aaai/gecko/
+# --- Allow ONLY metadata.pt in optimized_models ---
+!out/
+!out/optimized_models/
+!out/optimized_models/*/
+!out/optimized_models/*/*/
+!out/optimized_models/*/*/metadata.pt
