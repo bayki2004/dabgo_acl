@@ -9,11 +9,13 @@ import gc
 ## Run this part once all autocorrelation matrices are computed in auto_inv_sqrt.py
 ## Save this periodically due to very high memory usage. be aware disk space will be very high up to 1TB or more for all gradients.
 @torch.no_grad()
-def compute_normed_vectors_batched(gradient_files, autocorr_matrix, batch_size=10000, start_index=0):
+def compute_normed_vectors_batched(gradient_files, autocorr_matrix, source="original"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     pbar = tqdm(total=len(gradient_files), desc="Normalizing gradients")
     gradient_dir = os.path.join(os.path.dirname(__file__), "../data/trackstar/gradients")
+    if source != "original":
+        gradient_dir = os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}")
     for file_path in gradient_files:
         pbar.update(1)
         print(f"Processing: {file_path}")
@@ -45,11 +47,16 @@ def compute_normed_vectors_batched(gradient_files, autocorr_matrix, batch_size=1
 
         del block_vectors, block_indices
         torch.cuda.empty_cache()
-        
-        torch.save(gradients_list, os.path.join(gradient_dir, f"normed_{file_path}"))
-        print(f"Saved: {os.path.join(gradient_dir, f"normed_{file_path}")}")
-        os.remove(os.path.join(gradient_dir, file_path))
-        print(f"Deleted: {os.path.join(gradient_dir, file_path)}")
+        if source != "original":
+            torch.save(gradients_list, os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}/normed_{file_path}"))
+            print(f"Saved: {os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}/{file_path}")}")
+            os.remove(os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}/{file_path}"))
+            print(f"Deleted: {os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}/{file_path}")}")
+        else:
+            torch.save(gradients_list, os.path.join(gradient_dir, f"normed_{file_path}"))
+            print(f"Saved: {os.path.join(gradient_dir, f"normed_{file_path}")}")
+            os.remove(os.path.join(gradient_dir, file_path))
+            print(f"Deleted: {os.path.join(gradient_dir, file_path)}")
         del gradients_list
         torch.cuda.empty_cache()
 
@@ -71,7 +78,11 @@ if __name__ == "__main__":
         [f for f in gradient_files if int(re.search(r'grads_(\d+)\.pt', f).group(1)) > start_index and int(re.search(r'grads_(\d+)\.pt', f).group(1)) < end_index],
         key=lambda f: int(re.search(r'grads_(\d+)\.pt', f).group(1))
     )
+    if args.source != "original":
+        gradient_files = os.listdir(os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}"))
+        gradient_files = [f for f in gradient_files if f.endswith(".pt")]
+        print('gradient files', gradient_files)
     print('number of gradient files', len(gradient_files))
     autocorr_matrix = torch.load(os.path.join(os.path.dirname(__file__), '../data/trackstar/autocorr_matrix_inv_sqrt.pt'), weights_only=False)
     print('starting to compute normed vectors')
-    compute_normed_vectors_batched(gradient_files, autocorr_matrix, batch_size=10000, start_index=start_index)
+    compute_normed_vectors_batched(gradient_files, autocorr_matrix, source=args.source)

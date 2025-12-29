@@ -10,6 +10,7 @@ from transformers import DataCollatorWithPadding
 from torch.utils.data import DataLoader
 from datasets import load_from_disk
 from tqdm import tqdm
+from datasets import Dataset
 
 
 class TrackstarUnbatched:
@@ -25,13 +26,17 @@ class TrackstarUnbatched:
         self.grouped_grads = []
         self.number_of_samples = None
 
-    def compute_grouped_gradients_batch(self, sample, group_size=2):
+    def compute_grouped_gradients_batch(self, sample, group_size=2, source="original", sample_name="test"):
+        
         self.model.zero_grad()
-        input_ids = sample['input_ids'].to(self.device)
-        mask     = sample['attention_mask'].to(self.device)
-        x_in = input_ids[:, :-1];  y = input_ids[:, 1:];  m = mask[:, :-1]
-        out = self.model(input_ids=x_in, attention_mask=m).logits
-        loss = self.loss_fn(out.view(-1, out.size(-1)), y.view(-1)) / y.numel()
+
+        input_ids = sample["input_ids"].to(self.device)         
+        mask      = sample["attention_mask"].to(self.device)    
+
+        labels = sample.get("labels", input_ids).to(self.device)
+        outputs = self.model(input_ids=input_ids, attention_mask=mask, labels=labels)
+
+        loss = outputs.loss
         loss.backward()
         block_grads = defaultdict(list)
         for name, p in self.model.named_parameters():
@@ -51,14 +56,27 @@ class TrackstarUnbatched:
             else:
                 continue
             block_grads[key].append(g)
+        
+        
+        if source != "original":
+            block_grads = {k: torch.cat(v, dim=0).detach() for k, v in block_grads.items()}
+            block_grads = self.projector.project_per_block(block_grads)
+
+            os.makedirs(os.path.join(os.path.dirname(__file__), f'../data/trackstar/sample_gradients/{args.source}'), exist_ok=True)
+            torch.save([block_grads], os.path.join(os.path.dirname(__file__), f'../data/trackstar/sample_gradients/{args.source}/{sample_name}.pt'))
+            print(f"Saved grouped gradients to {os.path.join(os.path.dirname(__file__), f'../data/trackstar/sample_gradients/{args.source}/{sample_name}.pt')}")
+            return
         block_grads = {k: torch.cat(v.detach(), dim=0) for k, v in block_grads.items()}
         block_grads = self.projector.project_per_block(block_grads)
-        
         self.grouped_grads.append(block_grads)
         self.counter += 1
         if self.counter == self.number_of_samples-1 or self.counter % 10000 == 0:
-            os.makedirs(os.path.join(os.path.dirname(__file__), f'../data/trackstar/gradients'), exist_ok=True)
-            torch.save(self.grouped_grads, os.path.join(os.path.dirname(__file__), f'../data/trackstar/gradients/grads_{self.counter}.pt'))
+            if source == "original":
+
+                os.makedirs(os.path.join(os.path.dirname(__file__), f'../data/trackstar/gradients'), exist_ok=True)
+                torch.save(self.grouped_grads, os.path.join(os.path.dirname(__file__), f'../data/trackstar/gradients/grads_{self.counter}.pt'))
+            
+                
             print('saved', len(self.grouped_grads), 'grouped gradients')
             self.grouped_grads = []
             torch.cuda.empty_cache()
@@ -145,6 +163,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--start_idx', type=int, default=0)
     parser.add_argument('--end_idx', type=int, default=10)
+    parser.add_argument("--source", type=str, default="wikipedia")
+    
     args = parser.parse_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -179,11 +199,31 @@ if __name__ == '__main__':
     trackstar.projector = proj
     print("TrackstarUnbatched initialized...")
     print("Loading train dataset...")
-    train_dataset = load_from_disk(os.path.join(os.path.dirname(__file__), '../../data/training_data/mixtures/gut10k_wiki100k_fw100k_tok1024/train_test_split/train'))
-    
-    train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
-    trackstar.number_of_samples = len(train_dataset)
-    train_dataset = train_dataset.select(range(args.start_idx, args.end_idx))
+    names = None
+    if args.source == "original":
+        train_dataset = load_from_disk(os.path.join(os.path.dirname(__file__), '../../data/training_data/mixtures/gut10k_wiki100k_fw100k_tok1024/train_test_split/train'))
+        
+        train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+        trackstar.number_of_samples = len(train_dataset)
+        train_dataset = train_dataset.select(range(args.start_idx, args.end_idx))
+    else:
+        names = os.listdir(os.path.join(os.path.dirname(__file__), f'../out/optimized_models/{args.source}'))
+        print(f"Number of samples: {len(names)}")
+        print(f"Names: {names}")
+        train_dataset = []
+        for name in names:
+            sample = torch.load(os.path.join(os.path.dirname(__file__), f"../out/optimized_models/{args.source}/{name}/metadata.pt"), weights_only=False)
+            input_ids = sample['output_ids'].squeeze(0)
+            attention_mask = torch.ones_like(input_ids)
+            prompt_length = len(tokenizer.encode(sample['prompt'], add_special_tokens=False))
+            labels = input_ids.clone()
+            labels[:prompt_length] = -100
+            train_dataset.append({
+                'input_ids': input_ids,
+                'attention_mask': attention_mask,
+                'labels': labels
+            })
+        train_dataset = Dataset.from_list(train_dataset)
     print('len of train dataset', len(train_dataset))
 
     print('number of samples', trackstar.number_of_samples)
@@ -200,6 +240,6 @@ if __name__ == '__main__':
     
     print('starting to compute gradients')
     for i, batch in tqdm(enumerate(loader), total=len(loader)):
-        trackstar.compute_grouped_gradients_batch(batch, group_size=2)
+        trackstar.compute_grouped_gradients_batch(batch, group_size=2, source=args.source, sample_name=names[i])
         
     print("Gradients computed...")
