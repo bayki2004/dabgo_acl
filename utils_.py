@@ -47,6 +47,9 @@ def top_k_samples(method, k, source, name,ds, steps=3):
     if method == "gecko":
         sample_scores = np.load(f"data/gecko/sample_scores/{source}/{name}.npy")
         sample_scores = sample_scores.argsort()[::-1]
+    if method == "trackstar":
+        sample_scores = np.load(f"data/trackstar/scores/{source}/{name}.npy")
+        sample_scores = sample_scores.argsort()[::-1]
 
     if method == "bm25":
         sample_scores = np.load(f"data/bm25/{source}/{name}.npy")
@@ -104,4 +107,7 @@ def method_scores(method, k, source, name,ds, steps=3):
         sample_scores = np.load(f"data/bm25/{source}/{name}.npy")
         sample_scores = sample_scores.argsort()[::-1]
     
+    if method == "trackstar":
+        sample_scores = np.load(f"data/trackstar/scores/{source}/{name}.npy")
+        sample_scores = sample_scores.argsort()[::-1]
     return sample_scores

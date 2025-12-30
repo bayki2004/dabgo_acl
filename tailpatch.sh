@@ -51,9 +51,9 @@ echo "Conda activated"
 cd ${DIRECTORY}
 
 # Hyperparams
-LR=0.0001
+LR=0.00001
 SOURCES=("gutenberg" "Self-Written")
-METHODS=("descent" "dabgo" "ascent" "random" "random_strings" "gecko" "bm25")
+METHODS=("descent" "dabgo" "ascent" "random" "random_strings" "gecko" "bm25" "trackstar")
 
 NUM_SAMPLES=(1 2 3 4 5 6 7 8 9 10 15 20)
 
@@ -71,7 +71,7 @@ for s in "${SOURCES[@]}"; do
         --lr="${LR}" \
         --ascent_steps=100 \
         --descent_steps=100 \
-        --save_dir="results_updated"
+        --save_dir="results_updated_1e5"
     done
   done
 done

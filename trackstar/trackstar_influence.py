@@ -1,73 +1,105 @@
-## Compute Trackstar Influence
-
-## Load Query vector
-## Load All Sample vectors
-## Sort by name grads_x.pt
-## Compute Influence and append to one long list
-## Save list to file also during checkpoints
-import torch
 import os
-import numpy as np
-import argparse
 import re
+import argparse
 from tqdm import tqdm
 
+import torch
+import numpy as np
 
 
-def compute_influence(sample_gradients, gradient_files, sample_grad_name, sample_gradient_dir):
-        influence_list = torch.zeros(len(gradient_files)*20000)
-        j = 0
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print('Computing influence for ', sample_grad_name)
-        gradient_dir = os.path.join(os.path.dirname(__file__), "../data/trackstar/gradients")
-        for gradient_file in tqdm(gradient_files, total=len(gradient_files), desc="Computing influence"):
-            gradient = torch.load(os.path.join(gradient_dir, gradient_file), map_location=device, weights_only=False)
-            for i in range(len(gradient)):
-                grad = gradient[i]
-                for key, value in grad.items():
-                    curr_infl = torch.dot(sample_gradients[key], value)
-                    
-                    influence_list[j] += curr_infl.cpu()
-                
-                if j % 20000 == 0:
-                    
-                    np.save(os.path.join(sample_gradient_dir, f"{sample_grad_name}.npy"), influence_list)
-                    print(f"Saved influence list to {os.path.join(sample_gradient_dir, f'{sample_grad_name}.npy')}")
-                j += 1
-        np.save(os.path.join(sample_gradient_dir, f"{sample_grad_name}.npy"), influence_list)
-        print(f"Saved influence list to {os.path.join(sample_gradient_dir, f'{sample_grad_name}.npy')}")
-        return influence_list
+def sorted_grad_files(gradient_dir):
+    files = [f for f in os.listdir(gradient_dir)
+             if f.endswith(".pt") and f.startswith("normed_grads")]
+    files.sort(key=lambda f: int(re.search(r"normed_grads_(\d+)\.pt", f).group(1)))
+    return files
+
+
+@torch.no_grad()
+def compute_influence_all_samples(
+    sample_grads: dict,          
+    gradient_dir: str,
+    gradient_files: list[str],
+    device: str,
+    save_dir: str | None = None,
+):
+    
+    accum = {name: [] for name in sample_grads.keys()}
+
+    for file_idx, fname in enumerate(tqdm(gradient_files, desc="Streaming grad shards")):
+        shard = torch.load(os.path.join(gradient_dir, fname),
+                           map_location=device, weights_only=False)
+        shard_len = len(shard)
+        shard_scores = {name: torch.zeros(shard_len, device=device) for name in sample_grads.keys()}
+
+        for i, grad_dict in enumerate(shard):
+            for key, vec in grad_dict.items():
+                for name, sgrad in sample_grads.items():
+                    shard_scores[name][i] += torch.dot(sgrad[key], vec).item()
+        # append to accum lists (move to cpu once per shard)
+        for name in sample_grads.keys():
+            accum[name].append(shard_scores[name].detach().cpu())
+            tmp = torch.cat(accum[name]).numpy()
+            print(tmp.shape)
+            np.save(os.path.join(save_dir, f"{name}.partial.npy"), tmp)
+    results = {}
+    for name in sample_grads.keys():
+        full = torch.cat(accum[name]).numpy()
+        print(full.shape)
+        results[name] = full
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            np.save(os.path.join(save_dir, f"{name}.npy"), full)
+    return results
+
+
+def load_sample_gradients(sample_names, sample_dir, device, source):
+    out = {}
+    already_processed = os.listdir(os.path.join(os.path.dirname(__file__), f"../data/trackstar/scores/{source}"))
+    for raw_name in sample_names:
+        name = raw_name[7:]
+        if name + ".npy" in already_processed:
+            print(f"Skipping {name} because it already has a score")
+            continue
+        g = torch.load(os.path.join(sample_dir, f"{raw_name}.pt"),
+                       map_location=device, weights_only=False)[0]
+        name = raw_name
+        if name.startswith("normed_"):
+            name = name[len("normed_"):]
+        elif len(name) >= 7 and name[:7] == "normed_":
+            name = name[7:]
+
+        out[name] = g
+    return out
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=str, required=True)
-    parser.add_argument("--sample_names", type=str, nargs='+', default=None)
+    parser.add_argument("--source", type=str, required=True)
+    parser.add_argument("--sample_names", type=str, nargs="+", default=None)
     args = parser.parse_args()
-    sample_gradients = os.listdir(os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}"))
-    sample_gradients = [f for f in sample_gradients if f.endswith(".pt")]
-    sample_gradients = [f.replace('.pt', '') for f in sample_gradients]
-    gradient_dir = os.path.join(os.path.dirname(__file__), "../data/trackstar/gradients")
-    gradient_files = os.listdir(gradient_dir)
-    gradient_files = [f for f in gradient_files if f.endswith(".pt") and f.startswith("normed_grads")]
-    gradient_files.sort(key=lambda f: int(re.search(r'normed_grads_(\d+)\.pt', os.path.basename(f)).group(1)))
-    
-    scores_dir = os.path.join(os.path.dirname(__file__), f"../data/trackstar/scores/{args.source}")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    base_dir = os.path.dirname(__file__)
+
+    gradient_dir = os.path.join(base_dir, "../data/trackstar/gradients")
+    grad_files = sorted_grad_files(gradient_dir)
+    print(len(grad_files))
+    print(grad_files[:10])
+    sample_dir = os.path.join(base_dir, f"../data/trackstar/sample_gradients/{args.source}")
+    all_samples = [f[:-3] for f in os.listdir(sample_dir) if f.endswith(".pt")]
+    sample_names = args.sample_names if args.sample_names is not None else all_samples
+
+    scores_dir = os.path.join(base_dir, f"../data/trackstar/scores/{args.source}")
     os.makedirs(scores_dir, exist_ok=True)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print("On device: ", device)
-    if args.sample_names is not None:
-        sample_gradients = args.sample_names
-        print(sample_gradients)
-    block_autocorr_inv_sqrt = torch.load(os.path.join(gradient_dir, "../autocorr_matrix_inv_sqrt.pt"), map_location=device)
-    for sample_grad_name in sample_gradients:
-        print(f"Processing {sample_grad_name}")
-        sample_gradient = torch.load(os.path.join(os.path.dirname(__file__), f"../data/trackstar/sample_gradients/{args.source}/{sample_grad_name}.pt"), map_location=device, weights_only=False)
-        sample_gradient = sample_gradient[0]
-        sample_grad_name = sample_grad_name[7:] ## remove normed_
-        print(sample_grad_name)
-        print(sample_gradient.keys())
-        influence_list = compute_influence(sample_gradient, gradient_files, sample_grad_name, scores_dir)
-        np.save(os.path.join(scores_dir, f"{sample_grad_name}.npy"), influence_list)
-        print(f"Saved influence list to {os.path.join(scores_dir, f'{sample_grad_name}.npy')}")
-        
+    print(sample_names)
+    sample_grads = load_sample_gradients(sample_names, sample_dir, device, args.source)
+    print(sample_grads.keys())
+    compute_influence_all_samples(
+        sample_grads=sample_grads,
+        gradient_dir=gradient_dir,
+        gradient_files=grad_files,
+        device=device,
+        save_dir=scores_dir,
+    )
+
+    print("Done.")

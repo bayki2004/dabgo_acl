@@ -5,8 +5,8 @@
 #SBATCH --mem=50GB
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=2
-#SBATCH --gres=gpu:0
-#SBATCH --exclude=tikgpu10,tikgpu[02-06]
+#SBATCH --gres=gpu:1
+#SBATCH --exclude=tikgpu10,tikgpu[06-09]
 #CommentSBATCH --account=tik-highmem
 #CommentSBATCH --constraint='titan_rtx|tesla_v100|titan_xp|a100_80gb'
 
@@ -51,7 +51,7 @@ echo "Conda activated"
 cd ${DIRECTORY}
 # Execute your code
 echo "Trackstar normed gradients computation"
-python trackstar/trackstar_influence.py --source "gutenberg" --sample_names "normed_Ramsay, Edward Bannerman,_1"
+python trackstar/trackstar_influence.py --source "gutenberg" 
 #
 # Send more noteworthy information to the output log
 echo "Finished at: $(date)"

@@ -107,6 +107,10 @@ def main(method, num_samples, source, lr, ascent_steps, descent_steps, save_dir,
         names = os.listdir(os.path.join(os.path.dirname(__file__), f"data/gecko/sample_scores/{source}/"))
         names = [name for name in names if name.endswith('.npy')]
         names = [name.replace('.npy', '') for name in names]
+    elif method == "trackstar":
+        names = os.listdir(os.path.join(os.path.dirname(__file__), f"data/trackstar/scores/{source}/"))
+        names = [name for name in names if name.endswith('.npy')]
+        names = [name.replace('.npy', '') for name in names]
     else:
         names = os.listdir(os.path.join(os.path.dirname(__file__), f"data/losses/{source}/"))
     
@@ -169,7 +173,8 @@ def main(method, num_samples, source, lr, ascent_steps, descent_steps, save_dir,
             gecko_results = np.load(os.path.join(os.path.dirname(__file__), f"gecko/gecko_wrong/sorted_scores/{source}/{name}.npy"))
             sorted_indices = gecko_results[:num_samples]
         if method == "trackstar":
-            continue
+            trackstar_results = np.load(os.path.join(os.path.dirname(__file__), f"data/trackstar/scores/{source}/{name}.npy"))
+            sorted_indices = np.argsort(trackstar_results)[::-1]
         if method == "original":
             continue
         if method == "random_strings":
